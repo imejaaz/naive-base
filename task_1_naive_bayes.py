@@ -21,6 +21,11 @@ class NaiveBayes:
         self.class_info = class_info
         self.feature_info = feature_info
         # You can add further variables/attributes/etc. here
+        # local variables for counts and probabilities
+        self._trained = False
+        self._class_counts: dict[str, int] = {}
+        self._conditional_counts: dict[str, dict[str, dict[str, int]]] = {}
+        self._total_instances = 0
 
     # This function trains the model, aka calculates all the necessary probabilities that a naive Bayes model needs.
     # How you store the computed probabilities internally is up to you - you may want to extend the init function.
@@ -29,7 +34,42 @@ class NaiveBayes:
     # At input, train_model takes:
     # - training_data - a pandas DataFrame that contains all the attribute values and class value for a given entry
     def train_model(self, training_data: pd.DataFrame):
-        print("Do something!")
+        # purge old trining
+        self._trained = False
+        self._class_counts = {}
+        self._conditional_counts = {}
+        self._total_instances = 0
+
+        # get class column name
+        class_col = self.class_info[0]
+        # count clases
+        self._total_instances = len(training_data)
+        for class_val in self.class_info[1]:
+            self._class_counts[class_val] = 0
+            # initialize conditional count for every feature and each permitted value
+            self._conditional_counts[class_val] = {}
+            for feat, vals in self.feature_info.items():
+                self._conditional_counts[class_val][feat] = {v: 0 for v in vals}
+
+        # iterate rows and populate counts
+        for _, row in training_data.iterrows():
+            c = row[class_col]
+            # if class value not in expected list, skip
+            if c not in self._class_counts:
+                # include it to be robust
+                self._class_counts[c] = 0
+                self._conditional_counts[c] = {feat: {v: 0 for v in vals} for feat, vals in self.feature_info.items()}
+            self._class_counts[c] += 1
+            for feat in self.feature_info.keys():
+                val = row[feat]
+                # convert to str for dictionary keys
+                if val not in self._conditional_counts[c][feat]:
+                    # unseen value - add key with count 1
+                    self._conditional_counts[c][feat][val] = 1
+                else:
+                    self._conditional_counts[c][feat][val] += 1
+
+        self._trained = True
 
     # This function predicts the classes for entries in the training_data and produces an extended data frame.
     # At input, it takes:
@@ -39,8 +79,48 @@ class NaiveBayes:
     #                   that for every entry states the class value predicted for that entry. In case of ties,
     #                   the chosen class is the one that appears earlier alphabetically.
     def predict(self, testing_data: pd.DataFrame) -> pd.DataFrame:
-        classified_data = None
-        return classified_data
+        if not self._trained:
+            # nothing trained, return input with PredictedClass as None
+            df = testing_data.copy()
+            df['PredictedClass'] = None
+            return df
+
+        class_col = self.class_info[0]
+        class_values = self.class_info[1]
+
+        # for each row compute posterior proportional score = P(class) * product P(feat=val | class)
+        results = []
+        for _, row in testing_data.iterrows():
+            best_classes = []
+            best_score = -1
+            # compute for all classes
+            for c in sorted(class_values):
+                # if class was never seen in training, probability 0
+                class_count = self._class_counts.get(c, 0)
+                if self._total_instances == 0 or class_count == 0:
+                    score = 0.0
+                else:
+                    score = class_count / self._total_instances
+                    for feat in self.feature_info.keys():
+                        val = row[feat]
+                        # conditional probability = count(feature=value and class)/count(class)
+                        count = self._conditional_counts.get(c, {}).get(feat, {}).get(val, 0)
+                        cond = count / class_count if class_count > 0 else 0.0
+                        score = score * cond
+                if score > best_score:
+                    best_score = score
+                    best_classes = [c]
+                elif score == best_score:
+                    best_classes.append(c)
+
+            # break ties alphabetically: sorted class_values ensures alphabetical order was used when iterating,
+            # but tie list may contain classes in that order; pick earliest alphabetically
+            predicted = sorted(best_classes)[0] if best_classes else None
+            results.append(predicted)
+
+        df = testing_data.copy()
+        df['PredictedClass'] = results
+        return df
 
     # The function returns the probability of a given class value. You can assume
     # that this function simply retrieves the desired probability after training rather than
@@ -50,7 +130,9 @@ class NaiveBayes:
     # The function outputs:
     # - probability - float representing the probability of the given class value
     def retrieve_class_probability(self, class_value: str) -> float:
-        return -1
+        if not self._trained or self._total_instances == 0:
+            return 0.0
+        return self._class_counts.get(class_value, 0) / self._total_instances
 
     # The function returns the conditional probably of a feature value assuming a given class value. You can assume
     # that this function simply retrieves the desired probability after training rather than
@@ -63,4 +145,10 @@ class NaiveBayes:
     # - probability - float representing the calculated conditional probability
     #
     def retrieve_conditional_probability(self, class_value: str, feature_name: str, feature_value: str) -> float:
-        return -1
+        if not self._trained:
+            return 0.0
+        class_count = self._class_counts.get(class_value, 0)
+        if class_count == 0:
+            return 0.0
+        count = self._conditional_counts.get(class_value, {}).get(feature_name, {}).get(feature_value, 0)
+        return count / class_count

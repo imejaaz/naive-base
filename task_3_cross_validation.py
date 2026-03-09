@@ -20,8 +20,24 @@ from task_1_naive_bayes import *
 def partition_data(training_data: pd.DataFrame, f: int) -> list[pd.DataFrame]:
 
     partition_list = []
-    # Compute, compute, compute!
-    return partition_list
+    # handle edge cases
+    n = len(training_data)
+    if n == 0:
+        return []
+    f = max(1, min(f, n))
+
+    base = n // f
+    rem = n % f
+    partitions = []
+    start = 0
+    for i in range(f):
+        size = base + (1 if i < rem else 0)
+        end = start + size
+        part = training_data.iloc[start:end]
+        partitions.append(part)
+        start = end
+
+    return partitions
 
 
 # This function transforms partitions into training and testing data for each cross-validation round (there are
@@ -46,7 +62,16 @@ def arrange_data_for_cv(partition_list: list[pd.DataFrame], f: int) \
         print("Something went really wrong! Why is the number of partitions different from f??")
         return []
     folds = []
-    # Do your thing!
+    # for each partition i, testing data is partition_list[i], training is concat of others
+    for i in range(len(partition_list)):
+        testing = partition_list[i]
+        # concat all partitions except i
+        training_parts = [p for idx, p in enumerate(partition_list) if idx != i]
+        if training_parts:
+            training = pd.concat(training_parts)
+        else:
+            training = pd.DataFrame(columns=testing.columns)
+        folds.append((i, training, testing))
     return folds
 
 
@@ -65,12 +90,33 @@ def arrange_data_for_cv(partition_list: list[pd.DataFrame], f: int) \
 
 def evaluate_results(actual_class_list: list[pd.Series], predicted_class_list: list[pd.Series],
                      class_values: list[str]) -> dict[str, float]:
-    results = {'avg_macro_precision': 0.0, 'avg_macro_recall': 0.0, 'avg_macro_f_measure': 0.0,
-               'avg_weighted_precision': 0.0, 'avg_weighted_recall': 0.0,
-               'avg_weighted_f_measure': 0.0, 'avg_standard_accuracy': 0.0,
-               'avg_balanced_accuracy': 0.0}
-    # Black magic time!
-    return results
+    # initialize accumulators
+    keys = ['macro_precision', 'macro_recall', 'macro_f_measure', 'weighted_precision', 'weighted_recall',
+            'weighted_f_measure', 'standard_accuracy', 'balanced_accuracy']
+    acc = {k: 0.0 for k in keys}
+    rounds = len(actual_class_list)
+    if rounds == 0:
+        return {'avg_macro_precision': 0.0, 'avg_macro_recall': 0.0, 'avg_macro_f_measure': 0.0,
+                'avg_weighted_precision': 0.0, 'avg_weighted_recall': 0.0,
+                'avg_weighted_f_measure': 0.0, 'avg_standard_accuracy': 0.0,
+                'avg_balanced_accuracy': 0.0}
+
+    import task_2_evaluation as evalmod
+    for i in range(rounds):
+        actual = actual_class_list[i].reset_index(drop=True)
+        predicted = predicted_class_list[i].reset_index(drop=True)
+        vals = evalmod.evaluate_classification(actual, predicted, class_values)
+        for k in keys:
+            acc[k] += vals[k]
+
+    # avg
+    for k in keys:
+        acc[k] = acc[k] / rounds
+
+    return {'avg_macro_precision': acc['macro_precision'], 'avg_macro_recall': acc['macro_recall'],
+            'avg_macro_f_measure': acc['macro_f_measure'], 'avg_weighted_precision': acc['weighted_precision'],
+            'avg_weighted_recall': acc['weighted_recall'], 'avg_weighted_f_measure': acc['weighted_f_measure'],
+            'avg_standard_accuracy': acc['standard_accuracy'], 'avg_balanced_accuracy': acc['balanced_accuracy']}
 
 
 # In this task you are expected to perform and evaluate cross-validation on a given dataset.
@@ -100,5 +146,40 @@ def cross_validate(nb: NaiveBayes, training_data: pd.DataFrame, f: int,
                    partition_func=partition_data, prep_func=arrange_data_for_cv, eval_func=evaluate_results) \
         -> tuple[pd.DataFrame, dict[str, float]]:
     output_dataset = None
+    # partition
+    partitions = partition_func(training_data, f)
+    f_eff = len(partitions)
+    if f_eff == 0:
+        return training_data.copy(), {}
 
-    return output_dataset, {}
+    folds = prep_func(partitions, f_eff)
+
+    # prepare output dataset: copy original training_data and add PredictedClass and fold
+    output_dataset = training_data.copy()
+    output_dataset['PredictedClass'] = None
+    output_dataset['Fold'] = None
+
+    actual_list = []
+    predicted_list = []
+    class_values = nb.class_info[1]
+
+    for (round_num, train_df, test_df) in folds:
+        # train classifier for this round
+        nb.train_model(train_df)
+        classified = nb.predict(test_df)
+
+        # append actual and predicted series
+        class_col = nb.class_info[0]
+        actual_series = classified[class_col]
+        predicted_series = classified['PredictedClass']
+        actual_list.append(actual_series.reset_index(drop=True))
+        predicted_list.append(predicted_series.reset_index(drop=True))
+
+        # write predictions back to output_dataset preserving original indices
+        for idx, val in zip(classified.index, classified['PredictedClass']):
+            output_dataset.at[idx, 'PredictedClass'] = val
+            output_dataset.at[idx, 'Fold'] = round_num
+
+    # evalute aggregated results
+    metrics = eval_func(actual_list, predicted_list, class_values)
+    return output_dataset, metrics

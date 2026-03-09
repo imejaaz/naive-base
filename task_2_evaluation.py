@@ -30,7 +30,15 @@ import pandas as pd
 def confusion_matrix(actual_class: pd.Series, predicted_class: pd.Series, class_values: list[str]) -> pd.DataFrame:
     matrix = pd.DataFrame(0, index=class_values, columns=class_values)
 
-    # WE WILL IMPLEMENT THIS IN CLASS, DON'T WORRY!
+    # iterate through provided series and increment matrix rows(predicted)/columns(actual)
+    # ensure indices align by iterating over positions
+    for i in range(len(actual_class)):
+        actual = actual_class.iloc[i]
+        predicted = predicted_class.iloc[i]
+        # Only consider values that are in class_values; if not present, you may want to add them,
+        # but here we ignore unexpected values (consistent with template assumptions)
+        if actual in class_values and predicted in class_values:
+            matrix.at[predicted, actual] += 1
 
     return matrix
 
@@ -48,18 +56,30 @@ def confusion_matrix(actual_class: pd.Series, predicted_class: pd.Series, class_
 #                 false negative values for that class.
 
 def compute_TPs(matrix: pd.DataFrame) -> dict[str, int]:
-    # WE WILL IMPLEMENT THIS IN CLASS, DON'T WORRY!
-    return {}
+    tps = {}
+    for c in matrix.index:
+        tps[c] = int(matrix.at[c, c])
+    return tps
 
 
 def compute_FPs(matrix: pd.DataFrame) -> dict[str, int]:
-    # WE WILL IMPLEMENT THIS IN CLASS, DON'T WORRY!
-    return {}
+    fps = {}
+    for c in matrix.index:
+        # false positives: predicted as c but actual is not c -> sum of row c minus diagonal
+        row_sum = int(matrix.loc[c, :].sum())
+        tp = int(matrix.at[c, c])
+        fps[c] = row_sum - tp
+    return fps
 
 
 def compute_FNs(matrix: pd.DataFrame) -> dict[str, int]:
-    # WE WILL IMPLEMENT THIS IN CLASS, DON'T WORRY!
-    return {}
+    fns = {}
+    for c in matrix.columns:
+        # false negatives: actual c but predicted something else -> sum of column c minus diagonal
+        col_sum = int(matrix.loc[:, c].sum())
+        tp = int(matrix.at[c, c])
+        fns[c] = col_sum - tp
+    return fns
 
 
 # These functions compute the binary measures based on the provided values. Not all measures use all the values.
@@ -71,15 +91,26 @@ def compute_FNs(matrix: pd.DataFrame) -> dict[str, int]:
 # - binary precision/recall/f-measure - appropriate evaluation measure created using the binary approach.
 
 def compute_binary_precision(tp: int, fp: int, fn: int) -> float:
-    return -1
+    denom = tp + fp
+    if denom == 0:
+        return 0.0
+    return tp / denom
 
 
 def compute_binary_recall(tp: int, fp: int, fn: int) -> float:
-    return -1
+    denom = tp + fn
+    if denom == 0:
+        return 0.0
+    return tp / denom
 
 
 def compute_binary_f_measure(tp: int, fp: int, fn: int) -> float:
-    return -1
+    p = compute_binary_precision(tp, fp, fn)
+    r = compute_binary_recall(tp, fp, fn)
+    denom = p + r
+    if denom == 0:
+        return 0.0
+    return 2 * p * r / denom
 
 
 # These functions compute the macro precision, macro recall, macro f-measure, based on the offered confusion matrix.
@@ -93,15 +124,37 @@ def compute_binary_f_measure(tp: int, fp: int, fn: int) -> float:
 # - macro precision/recall/f-measure - appropriate evaluation measures created using the macro average approach.
 
 def compute_macro_precision(matrix: pd.DataFrame) -> float:
-    return -1
+    tps = compute_TPs(matrix)
+    fps = compute_FPs(matrix)
+    vals = []
+    for c in matrix.index:
+        vals.append(compute_binary_precision(tps[c], fps[c], 0))
+    if len(vals) == 0:
+        return 0.0
+    return sum(vals) / len(vals)
 
 
 def compute_macro_recall(matrix: pd.DataFrame) -> float:
-    return -1
+    tps = compute_TPs(matrix)
+    fns = compute_FNs(matrix)
+    vals = []
+    for c in matrix.index:
+        vals.append(compute_binary_recall(tps[c], 0, fns[c]))
+    if len(vals) == 0:
+        return 0.0
+    return sum(vals) / len(vals)
 
 
 def compute_macro_f_measure(matrix: pd.DataFrame) -> float:
-    return -1
+    tps = compute_TPs(matrix)
+    fps = compute_FPs(matrix)
+    fns = compute_FNs(matrix)
+    vals = []
+    for c in matrix.index:
+        vals.append(compute_binary_f_measure(tps[c], fps[c], fns[c]))
+    if len(vals) == 0:
+        return 0.0
+    return sum(vals) / len(vals)
 
 
 # These functions compute the weighted precision, macro recall, macro f-measure, based on the offered confusion matrix.
@@ -116,15 +169,47 @@ def compute_macro_f_measure(matrix: pd.DataFrame) -> float:
 # - weighted precision/recall/f-measure - appropriate evaluation measures created using the weighted average approach.
 
 def compute_weighted_precision(matrix: pd.DataFrame) -> float:
-    return -1
+    tps = compute_TPs(matrix)
+    fps = compute_FPs(matrix)
+    # support is the actual counts
+    supports = {c: int(matrix.loc[:, c].sum()) for c in matrix.columns}
+    total = sum(supports.values())
+    if total == 0:
+        return 0.0
+    weighted = 0.0
+    for c in matrix.index:
+        p = compute_binary_precision(tps[c], fps[c], 0)
+        weighted += p * supports[c]
+    return weighted / total
 
 
 def compute_weighted_recall(matrix: pd.DataFrame) -> float:
-    return -1
+    tps = compute_TPs(matrix)
+    fns = compute_FNs(matrix)
+    supports = {c: int(matrix.loc[:, c].sum()) for c in matrix.columns}
+    total = sum(supports.values())
+    if total == 0:
+        return 0.0
+    weighted = 0.0
+    for c in matrix.index:
+        r = compute_binary_recall(tps[c], 0, fns[c])
+        weighted += r * supports[c]
+    return weighted / total
 
 
 def compute_weighted_f_measure(matrix: pd.DataFrame) -> float:
-    return -1
+    tps = compute_TPs(matrix)
+    fps = compute_FPs(matrix)
+    fns = compute_FNs(matrix)
+    supports = {c: int(matrix.loc[:, c].sum()) for c in matrix.columns}
+    total = sum(supports.values())
+    if total == 0:
+        return 0.0
+    weighted = 0.0
+    for c in matrix.index:
+        f = compute_binary_f_measure(tps[c], fps[c], fns[c])
+        weighted += f * supports[c]
+    return weighted / total
 
 
 # These functions compute the standard and balanced multiclass accuracies based on the offered confusion matrix.
@@ -139,11 +224,25 @@ def compute_weighted_f_measure(matrix: pd.DataFrame) -> float:
 
 
 def compute_standard_accuracy(matrix: pd.DataFrame) -> float:
-    return -1
+    total = int(matrix.values.sum())
+    if total == 0:
+        return 0.0
+    correct = 0
+    for c in matrix.index:
+        correct += int(matrix.at[c, c])
+    return correct / total
 
 
 def compute_balanced_accuracy(matrix: pd.DataFrame) -> float:
-    return -1
+    # balancd accuracy is mean  per-class recalls
+    tps = compute_TPs(matrix)
+    fns = compute_FNs(matrix)
+    recalls = []
+    for c in matrix.index:
+        recalls.append(compute_binary_recall(tps[c], 0, fns[c]))
+    if len(recalls) == 0:
+        return 0.0
+    return sum(recalls) / len(recalls)
 
 
 # In this function you are expected to compute precision, recall, f-measure and accuracy of your classifier using
@@ -161,18 +260,19 @@ def compute_balanced_accuracy(matrix: pd.DataFrame) -> float:
 def evaluate_classification(actual_class: pd.Series, predicted_class: pd.Series, class_values: list[str],
                             confusion_func=confusion_matrix) \
         -> dict[str, float]:
-    # Have fun with the computations!
-    macro_precision = -1.0
-    macro_recall = -1.0
-    macro_f_measure = -1.0
+    # have fun with computations
+    matrix = confusion_func(actual_class.reset_index(drop=True), predicted_class.reset_index(drop=True), class_values)
+    macro_precision = compute_macro_precision(matrix)
+    macro_recall = compute_macro_recall(matrix)
+    macro_f_measure = compute_macro_f_measure(matrix)
 
-    weighted_precision = -1.0
-    weighted_recall = -1.0
-    weighted_f_measure = -1.0
+    weighted_precision = compute_weighted_precision(matrix)
+    weighted_recall = compute_weighted_recall(matrix)
+    weighted_f_measure = compute_weighted_f_measure(matrix)
 
-    standard_accuracy = -1.0
-    balanced_accuracy = -1.0
-    # once ready, we return the values
+    standard_accuracy = compute_standard_accuracy(matrix)
+    balanced_accuracy = compute_balanced_accuracy(matrix)
+    # when ready we return the values
     return {'macro_precision': macro_precision, 'macro_recall': macro_recall, 'macro_f_measure': macro_f_measure,
             'weighted_precision': weighted_precision, 'weighted_recall': weighted_recall,
             'weighted_f_measure': weighted_f_measure, 'standard_accuracy': standard_accuracy,
